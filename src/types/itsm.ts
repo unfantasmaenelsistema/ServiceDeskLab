@@ -184,7 +184,13 @@ export interface EvaluacionAlumno {
   rcasCompletados: number;
   fcrsCumplidos: number;
   historialEventos: EventoPuntuacion[];
+  /** Claves `tipo:referencia` ya puntuadas: cada acción suma o resta una sola vez */
+  eventosRegistrados?: string[];
+  /** Hitos de la rúbrica conseguidos por el alumno en esta sesión (no por los datos de ejemplo) */
+  logros?: LogroRubrica[];
 }
+
+export type LogroRubrica = 'escalado' | 'problema' | 'rca' | 'cab' | 'kb-pub' | 'csat';
 
 export type RfcTipo = 'Estándar' | 'Normal' | 'Emergencia';
 export type RfcRiesgo = 'Bajo' | 'Medio' | 'Alto' | 'Crítico';

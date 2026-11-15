@@ -118,7 +118,7 @@ export const PrintableReportModal: React.FC<PrintableReportModalProps> = ({
         <header className="flex items-start justify-between gap-4 border-b-2 border-slate-900 pb-5">
           <div className="flex items-center gap-3.5">
             <img
-              src="./assets/aistudio/icono_81a3db5b.png"
+              src="./assets/logo.png"
               alt="Logo ServiceDeskLab"
               className="h-12 w-12 object-contain"
             />

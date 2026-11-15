@@ -132,7 +132,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-700/80 bg-white p-0.5">
               <img
-                src="./assets/aistudio/icono_81a3db5b.png"
+                src="./assets/logo.png"
                 alt="Logo Un Fantasma en el Sistema"
                 className="h-full w-full object-contain"
               />
@@ -292,7 +292,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white p-0.5">
               <img
-                src="./assets/aistudio/icono_81a3db5b.png"
+                src="./assets/logo.png"
                 alt="Un Fantasma en el Sistema"
                 className="h-full w-full object-contain"
               />

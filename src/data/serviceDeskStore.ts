@@ -5,10 +5,12 @@ import {
   HistoryLogTipo,
   ImpactoNivel,
   IshikawaDiagrama,
+  LogroRubrica,
   Metricas,
   PoliticaEscaladoSla,
   Problema,
   RolSimulador,
+  SerieSlaTurno,
   ServiceDeskGlobalState,
   SolicitudCambioRfc,
   Ticket,
@@ -217,6 +219,8 @@ export function crearEvaluacionInicial(): EvaluacionAlumno {
     infraccionesSinRfc: 0,
     rcasCompletados: 0,
     fcrsCumplidos: 0,
+    eventosRegistrados: [],
+    logros: [],
     historialEventos: [
       {
         id: 'EV-INIT',
@@ -287,10 +291,12 @@ export function evaluarClasificacionMatriz(params: {
     };
   }
 
+  // Sin indicios en el texto no hay forma de valorar la clasificación: no suma ni resta
+  // (antes sumaba +10 por cualquier ticket y se podían acumular puntos creando tickets vacíos)
   return {
     esCoherente: true,
-    delta: 10,
-    motivo: 'Clasificación registrada conforme a matriz ITIL v4',
+    delta: 0,
+    motivo: 'Clasificación registrada (sin indicios suficientes para valorarla)',
   };
 }
 
@@ -307,11 +313,19 @@ export function registrarEventoEvaluacion(
       | 'cierre_sin_rfc'
       | 'rca_completo'
       | 'sla_cumplido'
+      | 'rfc_documentado'
       | 'rfc_aprobado'
       | 'rfc_rechazado'
+      | 'rfc_implementado'
       | 'fcr_cumplido';
   }
 ): EvaluacionAlumno {
+  // Cada acción puntúa una sola vez por elemento: rehacer un RCA, repetir un intento
+  // de cierre o crear varios RFC para el mismo problema ya no multiplica los puntos.
+  const clave = `${payload.tipo}:${payload.referenciaId}`;
+  const registrados = actual.eventosRegistrados ?? [];
+  if (registrados.includes(clave)) return actual;
+
   const nuevaPuntuacion = Math.max(0, actual.puntuacion + payload.delta);
   const nuevoEvento = {
     id: `EV-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -339,7 +353,29 @@ export function registrarEventoEvaluacion(
     fcrsCumplidos:
       (actual.fcrsCumplidos ?? 0) + (payload.tipo === 'fcr_cumplido' ? 1 : 0),
     historialEventos: [nuevoEvento, ...actual.historialEventos].slice(0, 12),
+    eventosRegistrados: [...registrados, clave],
+    logros: actual.logros ?? [],
   };
+}
+
+/** Marca un hito de la rúbrica como conseguido por el alumno. */
+export function registrarLogro(
+  actual: EvaluacionAlumno,
+  logro: LogroRubrica
+): EvaluacionAlumno {
+  const logros = actual.logros ?? [];
+  return logros.includes(logro) ? actual : { ...actual, logros: [...logros, logro] };
+}
+
+/**
+ * Estado inicial de un RFC según ITIL 4: solo el cambio Estándar de riesgo Bajo está
+ * preautorizado. Los Normales van al CAB y los de Emergencia al ECAB.
+ */
+export function estadoInicialRfc(
+  tipo: SolicitudCambioRfc['tipo'],
+  riesgo: SolicitudCambioRfc['riesgo']
+): 'Aprobado' | 'Pendiente Aprobación CAB' {
+  return tipo === 'Estándar' && riesgo === 'Bajo' ? 'Aprobado' : 'Pendiente Aprobación CAB';
 }
 
 function normalizarTextoBusqueda(txt: string): string {
@@ -622,6 +658,7 @@ export function simularDecisionCab(rfc: SolicitudCambioRfc): {
 } {
   const impl = rfc.planImplementacion.trim();
   const roll = rfc.planRollback.trim();
+  const comite = rfc.tipo === 'Emergencia' ? 'ECAB' : 'CAB';
   const textoCombinado = `${impl} ${roll}`.toLowerCase();
 
   const palabrasClaveTecnicas =
@@ -657,7 +694,7 @@ export function simularDecisionCab(rfc: SolicitudCambioRfc): {
     return {
       aprobado: false,
       comentario:
-        `CAB Rechazado (Riesgo ${rfc.riesgo}): El Plan de Implementación o el Plan de Marcha Atrás son insuficientes para autorizar cambios en ${rfc.ciAfectado}. Detalla pasos verificables, backup previo y criterio de reversión.`,
+        `${comite} Rechazado (Riesgo ${rfc.riesgo}): El Plan de Implementación o el Plan de Marcha Atrás son insuficientes para autorizar cambios en ${rfc.ciAfectado}. Detalla pasos verificables, backup previo y criterio de reversión.`,
     };
   }
 
@@ -665,13 +702,13 @@ export function simularDecisionCab(rfc: SolicitudCambioRfc): {
   if (aprobado) {
     return {
       aprobado: true,
-      comentario: `CAB Aprobado (${rfc.riesgo}): El comité valida el Plan de Implementación y la estrategia de Rollback sobre ${rfc.ciAfectado}. Autorizado ejecutar en ventana "${rfc.ventanaMantenimiento || 'Programada'}".`,
+      comentario: `${comite} Aprobado (${rfc.riesgo}): El comité valida el Plan de Implementación y la estrategia de Rollback sobre ${rfc.ciAfectado}. Autorizado ejecutar en ventana "${rfc.ventanaMantenimiento || 'Programada'}".`,
     };
   }
 
   return {
     aprobado: false,
-    comentario: `CAB Rechazado (${rfc.riesgo}): El comité solicita evidencias adicionales de pruebas previas en preproducción y tiempos estimados de Rollback para ${rfc.ciAfectado} antes de aprobar.`,
+    comentario: `${comite} Rechazado (${rfc.riesgo}): El comité solicita evidencias adicionales de pruebas previas en preproducción y tiempos estimados de Rollback para ${rfc.ciAfectado} antes de aprobar.`,
   };
 }
 
@@ -780,6 +817,55 @@ export function asignarEquipoN2PorCategoria(categoria: string): string {
   return 'Equipo N2 · Soporte Especializado';
 }
 
+/**
+ * Evolución real del cumplimiento SLA en la sesión: se recorre el historial de los tickets
+ * (altas, vencimientos de SLA y cierres) y se toma una muestra de hasta 6 puntos más el actual.
+ */
+export function construirHistorialSla(
+  tickets: Ticket[],
+  simulacionMinutosAvanzados: number
+): SerieSlaTurno[] {
+  type Ev = { ts: number; tipo: 'alta' | 'vencido' | 'cierre'; id: string };
+  const eventos: Ev[] = [];
+  for (const t of tickets) {
+    for (const ev of t.historyLog ?? []) {
+      const ts = Date.parse(ev.timestamp);
+      if (Number.isNaN(ts)) continue;
+      if (ev.tipo === 'creacion') eventos.push({ ts, tipo: 'alta', id: t.id });
+      else if (ev.tipo === 'sla_incumplido') eventos.push({ ts, tipo: 'vencido', id: t.id });
+      else if (ev.tipo === 'cierre') eventos.push({ ts, tipo: 'cierre', id: t.id });
+    }
+  }
+  eventos.sort((a, b) => a.ts - b.ts);
+
+  const altas = new Set<string>();
+  const vencidos = new Set<string>();
+  const cerrados = new Set<string>();
+  const puntos: SerieSlaTurno[] = [];
+  for (const ev of eventos) {
+    if (ev.tipo === 'alta') altas.add(ev.id);
+    else if (ev.tipo === 'vencido') vencidos.add(ev.id);
+    else cerrados.add(ev.id);
+    if (altas.size === 0) continue;
+    puntos.push({
+      franja: new Date(ev.ts).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+      cumplimientoPct: Math.round(((altas.size - vencidos.size) / altas.size) * 1000) / 10,
+      abiertos: [...altas].filter((id) => !cerrados.has(id)).length,
+    });
+  }
+
+  const paso = Math.max(1, Math.ceil(puntos.length / 6));
+  const muestra = puntos.filter((_, i) => i % paso === 0).slice(-6);
+  const total = tickets.length;
+  const incumplidos = tickets.filter((t) => t.slaIncumplido).length;
+  muestra.push({
+    franja: simulacionMinutosAvanzados > 0 ? `Actual (+${simulacionMinutosAvanzados}m)` : 'Actual',
+    cumplimientoPct: total > 0 ? Math.round(((total - incumplidos) / total) * 1000) / 10 : 100,
+    abiertos: tickets.filter((t) => t.estado !== 'Resuelto').length,
+  });
+  return muestra;
+}
+
 export function recalcularMetricas(
   tickets: Ticket[],
   problemas: Problema[],
@@ -863,26 +949,7 @@ export function recalcularMetricas(
     }))
     .sort((a, b) => b.cantidad - a.cantidad);
 
-  const baseShift = Math.max(55, Math.min(98, tasaCumplimientoSla));
-  const historialSla = [
-    { franja: '08:00', cumplimientoPct: 96, abiertos: 2 },
-    { franja: '10:00', cumplimientoPct: 92, abiertos: 3 },
-    { franja: '12:00', cumplimientoPct: 88, abiertos: 3 },
-    { franja: '14:00', cumplimientoPct: 85, abiertos: 4 },
-    {
-      franja: '16:00',
-      cumplimientoPct: Math.round(Math.min(100, baseShift + 2)),
-      abiertos: Math.max(1, ticketsAbiertos),
-    },
-    {
-      franja:
-        simulacionMinutosAvanzados > 0
-          ? `Actual (+${simulacionMinutosAvanzados}m)`
-          : 'Actual',
-      cumplimientoPct: Math.round(tasaCumplimientoSla),
-      abiertos: ticketsAbiertos,
-    },
-  ];
+  const historialSla = construirHistorialSla(tickets, simulacionMinutosAvanzados);
 
   const ticketsConCsat = tickets.filter(
     (t) => typeof t.csatPuntuacion === 'number'
@@ -1255,151 +1322,18 @@ export function crearEstadoInicial(): ServiceDeskGlobalState {
 }
 
 export function cargarEstadoLocalStorage(): ServiceDeskGlobalState {
+  // Misma normalización que la importación JSON: un estado guardado dañado o de una
+  // versión anterior no puede dejar la aplicación en blanco al recargar.
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      const inicial = crearEstadoInicial();
-      guardarEstadoLocalStorage(inicial);
-      return inicial;
-    }
-    const parsed = JSON.parse(raw) as Partial<ServiceDeskGlobalState>;
-    if (
-      !parsed ||
-      !Array.isArray(parsed.tickets) ||
-      !Array.isArray(parsed.problemas)
-    ) {
-      const inicial = crearEstadoInicial();
-      guardarEstadoLocalStorage(inicial);
-      return inicial;
-    }
-
-    const ticketsNormalizados: Ticket[] = parsed.tickets.map((t) => {
-      const slaObjetivoSeg =
-        typeof t.slaObjetivoSeg === 'number'
-          ? t.slaObjetivoSeg
-          : (t.slaObjetivoMin || 60) * 60;
-      const slaTranscurridoSeg =
-        typeof t.slaTranscurridoSeg === 'number'
-          ? t.slaTranscurridoSeg
-          : (t.slaTranscurridoMin || 0) * 60;
-      return {
-        ...t,
-        canalEntrada: t.canalEntrada ?? 'Portal de Usuario',
-        slaObjetivoSeg,
-        slaTranscurridoSeg,
-        slaObjetivoMin: Math.round(slaObjetivoSeg / 60),
-        slaTranscurridoMin: Math.floor(slaTranscurridoSeg / 60),
-        slaPausado: Boolean(t.slaPausado),
-        slaIncumplido:
-          t.estado !== 'Resuelto'
-            ? slaTranscurridoSeg > slaObjetivoSeg
-            : Boolean(t.slaIncumplido),
-        historyLog: Array.isArray(t.historyLog) && t.historyLog.length > 0
-          ? t.historyLog
-          : [
-              crearEventoHistorial({
-                tipo: 'creacion',
-                actor: t.asignadoA || 'Sistema ITIL',
-                accion: `Ticket ${t.id} registrado (${t.prioridad})`,
-                detalle: `CI: ${t.ciAfectado}`,
-                timestamp: t.creadoEn,
-              }),
-            ],
-      };
-    });
-
-    const problemasNormalizados: Problema[] = parsed.problemas.map((p) => ({
-      ...p,
-      ishikawa: normalizarIshikawa(p.ishikawa),
-      analisis5Porques: Array.isArray(p.analisis5Porques)
-        ? [
-            p.analisis5Porques[0] ?? '',
-            p.analisis5Porques[1] ?? '',
-            p.analisis5Porques[2] ?? '',
-            p.analisis5Porques[3] ?? '',
-            p.analisis5Porques[4] ?? '',
-          ]
-        : ['', '', '', '', ''],
-      historyLog: Array.isArray(p.historyLog) && p.historyLog.length > 0
-        ? p.historyLog
-        : [
-            crearEventoHistorial({
-              tipo: 'creacion',
-              actor: p.responsable || 'Gestor de Problemas N2',
-              accion: `Problema ${p.id} registrado (${p.prioridad})`,
-              detalle: `CI: ${p.ciAfectado}`,
-              timestamp: p.creadoEn,
-            }),
-          ],
-    }));
-
-    const simulacionMinutosAvanzados = parsed.simulacionMinutosAvanzados ?? 0;
-    const velocidadSimulacion: VelocidadSimulacion =
-      parsed.velocidadSimulacion === 0 ||
-      parsed.velocidadSimulacion === 1 ||
-      parsed.velocidadSimulacion === 10 ||
-      parsed.velocidadSimulacion === 60
-        ? parsed.velocidadSimulacion
-        : 1;
-    const politicaEscaladoSla: PoliticaEscaladoSla =
-      parsed.politicaEscaladoSla === 'pausar' ? 'pausar' : 'reiniciar';
-    const rolActivo: RolSimulador =
-      parsed.rolActivo === 'usuario' ||
-      parsed.rolActivo === 'n1' ||
-      parsed.rolActivo === 'n2' ||
-      parsed.rolActivo === 'sdm'
-        ? parsed.rolActivo
-        : 'sdm';
-
-    const evaluacionBase = parsed.evaluacion ?? crearEvaluacionInicial();
-    const evaluacion = {
-      ...evaluacionBase,
-      infraccionesSinRfc: evaluacionBase.infraccionesSinRfc ?? 0,
-      fcrsCumplidos: evaluacionBase.fcrsCumplidos ?? 0,
-    };
-
-    const rfcsNormalizados: SolicitudCambioRfc[] = Array.isArray(parsed.rfcs)
-      ? parsed.rfcs.map((r) => ({
-          ...r,
-          estado:
-            r.estado === 'En Deliberación CAB'
-              ? 'Pendiente Aprobación CAB'
-              : r.estado,
-        }))
-      : [];
-
-    const articulosKbNormalizados: ArticuloKb[] =
-      Array.isArray(parsed.articulosKb) && parsed.articulosKb.length > 0
-        ? parsed.articulosKb
-        : crearArticulosKbIniciales();
-
-    const metricas = recalcularMetricas(
-      ticketsNormalizados,
-      problemasNormalizados,
-      simulacionMinutosAvanzados,
-      rfcsNormalizados,
-      articulosKbNormalizados
-    );
-    const estado: ServiceDeskGlobalState = {
-      version: parsed.version ?? '11.0.0',
-      tickets: ticketsNormalizados,
-      problemas: problemasNormalizados,
-      rfcs: rfcsNormalizados,
-      articulosKb: articulosKbNormalizados,
-      metricas,
-      evaluacion,
-      simulacionMinutosAvanzados,
-      velocidadSimulacion,
-      politicaEscaladoSla,
-      rolActivo,
-    };
-    exponerEstadoGlobal(estado);
-    return estado;
+    const normalizado = raw ? normalizarEstadoImportado(JSON.parse(raw)) : null;
+    if (normalizado) return normalizado;
   } catch {
-    const inicial = crearEstadoInicial();
-    guardarEstadoLocalStorage(inicial);
-    return inicial;
+    // JSON ilegible: se vuelve al estado inicial
   }
+  const inicial = crearEstadoInicial();
+  guardarEstadoLocalStorage(inicial);
+  return inicial;
 }
 
 export function guardarEstadoLocalStorage(estado: ServiceDeskGlobalState): void {
@@ -1430,7 +1364,24 @@ export function normalizarEstadoImportado(
     return null;
   }
 
-  const ticketsNormalizados: Ticket[] = parsed.tickets.map((t) => {
+  // Solo se aceptan registros con la forma mínima: un elemento suelto mal formado
+  // (editado a mano, truncado...) rompía el renderizado y dejaba la app en blanco.
+  const esTexto = (v: unknown) => typeof v === 'string' && v.length > 0;
+  const esRegistro = (v: unknown): v is Record<string, unknown> =>
+    Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+  const ticketsValidos = (parsed.tickets as unknown[]).filter(
+    (t): t is Ticket =>
+      esRegistro(t) && esTexto(t.id) && esTexto(t.titulo) && esTexto(t.prioridad) && esTexto(t.estado)
+  );
+  const problemasValidos = (parsed.problemas as unknown[]).filter(
+    (p): p is Problema =>
+      esRegistro(p) && esTexto(p.id) && esTexto(p.titulo) && esTexto(p.prioridad) && esTexto(p.estado)
+  );
+  if (ticketsValidos.length !== parsed.tickets.length || problemasValidos.length !== parsed.problemas.length) {
+    return null;
+  }
+
+  const ticketsNormalizados: Ticket[] = ticketsValidos.map((t) => {
     const slaObjetivoSeg =
       typeof t.slaObjetivoSeg === 'number'
         ? t.slaObjetivoSeg
@@ -1447,10 +1398,10 @@ export function normalizarEstadoImportado(
       slaObjetivoMin: Math.round(slaObjetivoSeg / 60),
       slaTranscurridoMin: Math.floor(slaTranscurridoSeg / 60),
       slaPausado: Boolean(t.slaPausado),
+      // Un SLA vencido queda vencido: reiniciar el reloj al escalar no borra el incumplimiento
       slaIncumplido:
-        t.estado !== 'Resuelto'
-          ? slaTranscurridoSeg > slaObjetivoSeg
-          : Boolean(t.slaIncumplido),
+        Boolean(t.slaIncumplido) ||
+        (t.estado !== 'Resuelto' && slaTranscurridoSeg > slaObjetivoSeg),
       notasTecnicas: Array.isArray(t.notasTecnicas) ? t.notasTecnicas : [],
       historyLog:
         Array.isArray(t.historyLog) && t.historyLog.length > 0
@@ -1467,7 +1418,7 @@ export function normalizarEstadoImportado(
     };
   });
 
-  const problemasNormalizados: Problema[] = parsed.problemas.map((p) => ({
+  const problemasNormalizados: Problema[] = problemasValidos.map((p) => ({
     ...p,
     ishikawa: normalizarIshikawa(p.ishikawa),
     analisis5Porques: Array.isArray(p.analisis5Porques)
@@ -1516,6 +1467,10 @@ export function normalizarEstadoImportado(
     ...evaluacionBase,
     infraccionesSinRfc: evaluacionBase.infraccionesSinRfc ?? 0,
     fcrsCumplidos: evaluacionBase.fcrsCumplidos ?? 0,
+    eventosRegistrados: Array.isArray(evaluacionBase.eventosRegistrados)
+      ? evaluacionBase.eventosRegistrados
+      : [],
+    logros: Array.isArray(evaluacionBase.logros) ? evaluacionBase.logros : [],
   };
 
   const rfcsNormalizados: SolicitudCambioRfc[] = Array.isArray(parsed.rfcs)

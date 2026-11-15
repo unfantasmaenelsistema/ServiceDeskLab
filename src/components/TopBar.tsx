@@ -64,7 +64,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         </nav>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+      <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2.5 sm:shrink-0">
         <button
           type="button"
           onClick={onAbrirGuiaItil}
@@ -78,7 +78,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           <span className="sm:hidden">Guía</span>
         </button>
 
-        <div className="flex items-center gap-2 rounded-lg border border-slate-700/80 bg-[#111827] px-2.5 py-1.5">
+        <div className="flex min-w-0 items-center gap-2 rounded-lg border border-slate-700/80 bg-[#111827] px-2.5 py-1.5">
           <i
             className="fa-solid fa-user-shield text-xs text-blue-400"
             aria-hidden="true"
@@ -94,7 +94,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             value={rolActivo}
             onChange={(e) => onCambiarRol(e.target.value as RolSimulador)}
             aria-label="Seleccionar perfil de rol ITIL"
-            className="bg-transparent text-xs font-semibold text-slate-100 focus:outline-none cursor-pointer"
+            className="min-w-0 max-w-[11rem] bg-transparent text-xs font-semibold text-slate-100 focus:outline-none cursor-pointer sm:max-w-none"
           >
             {ROLES_DISPONIBLES.map((rol) => (
               <option

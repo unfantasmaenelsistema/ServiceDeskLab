@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { evaluarEstadoRca } from '../data/serviceDeskStore';
 import { ServiceDeskGlobalState } from '../types/itsm';
 
 interface ItilGuideModalProps {
@@ -26,6 +25,9 @@ export const ItilGuideModal: React.FC<ItilGuideModalProps> = ({
 
   if (!abierto) return null;
 
+  // Los datos de ejemplo ya traen tickets en N2, incidencias vinculadas y RCA completos:
+  // la rúbrica cuenta solo lo que hace el alumno en la sesión.
+  const logros = estado.evaluacion.logros ?? [];
   const hitos = [
     {
       id: 'clasificar',
@@ -46,7 +48,7 @@ export const ItilGuideModal: React.FC<ItilGuideModalProps> = ({
       id: 'escalado',
       titulo: 'Escalar incidencia compleja a Nivel 2 (OLA)',
       detalle: 'Transfiere un ticket de N1 a un equipo especialista N2.',
-      completado: estado.tickets.some((t) => t.nivel === 'N2'),
+      completado: logros.includes('escalado'),
       practica: 'Escalamiento Funcional',
     },
     {
@@ -54,7 +56,7 @@ export const ItilGuideModal: React.FC<ItilGuideModalProps> = ({
       titulo: 'Declarar Problema Maestro o vincular incidencias recurrentes',
       detalle:
         'Agrupa múltiples tickets con síntomas comunes en un registro PRB.',
-      completado: estado.tickets.some((t) => Boolean(t.problemaVinculadoId)),
+      completado: logros.includes('problema'),
       practica: 'Gestión de Problemas',
     },
     {
@@ -62,7 +64,7 @@ export const ItilGuideModal: React.FC<ItilGuideModalProps> = ({
       titulo: 'Completar Análisis de Causa Raíz (5 Porqués o Ishikawa 4M)',
       detalle:
         'Documenta la causa raíz antes de intentar cerrar un Problema P1/P2.',
-      completado: estado.problemas.some((p) => evaluarEstadoRca(p).rcaValido),
+      completado: logros.includes('rca'),
       practica: 'Diagnóstico RCA',
     },
     {
@@ -70,9 +72,7 @@ export const ItilGuideModal: React.FC<ItilGuideModalProps> = ({
       titulo: 'Aprobar e implementar un RFC ante el comité CAB',
       detalle:
         'Define Plan de Implementación y Rollback para autorizar cambios en CMDB.',
-      completado: estado.rfcs.some(
-        (r) => r.estado === 'Aprobado' || r.estado === 'Implementado'
-      ),
+      completado: logros.includes('cab'),
       practica: 'Change Enablement',
     },
     {
@@ -80,7 +80,7 @@ export const ItilGuideModal: React.FC<ItilGuideModalProps> = ({
       titulo: 'Retroalimentar la KEDB desde un Problema N2 cerrado',
       detalle:
         'Publica automáticamente un artículo tras resolver un Problema con RCA válido.',
-      completado: estado.articulosKb.some((a) => a.origen === 'Problema N2'),
+      completado: logros.includes('kb-pub'),
       practica: 'Mejora Continua',
     },
     {
@@ -88,7 +88,7 @@ export const ItilGuideModal: React.FC<ItilGuideModalProps> = ({
       titulo: 'Registrar encuesta de satisfacción (CSAT) en Portal de Usuario',
       detalle:
         'Valora un ticket resuelto desde el rol Portal de Usuario.',
-      completado: estado.metricas.csatTotalRespuestas > 0,
+      completado: logros.includes('csat'),
       practica: 'Experiencia de Usuario',
     },
   ];
