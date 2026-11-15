@@ -39,7 +39,11 @@ export const CreateRfcModal: React.FC<CreateRfcModalProps> = ({
   useEffect(() => {
     if (!problema) return;
     setTitulo(`Cambio en producción para resolver ${problema.id}: ${problema.ciAfectado}`);
-    setTipo(problema.prioridad === 'P1 - Crítica' ? 'Normal' : 'Estándar');
+    setTipo(
+      problema.prioridad === 'P1 - Crítica' || problema.prioridad === 'P2 - Alta'
+        ? 'Normal'
+        : 'Estándar'
+    );
     setRiesgo(
       problema.prioridad === 'P1 - Crítica'
         ? 'Alto'
@@ -92,6 +96,12 @@ export const CreateRfcModal: React.FC<CreateRfcModalProps> = ({
     if (planRollback.trim().length < 20) {
       setErrorForm(
         'El Plan de Marcha Atrás (Rollback) es obligatorio por política ITIL v4 (mín. 20 caracteres).'
+      );
+      return;
+    }
+    if (tipo === 'Estándar' && riesgo !== 'Bajo') {
+      setErrorForm(
+        'Un cambio Estándar está preautorizado solo si es de riesgo Bajo y repetible. Con este riesgo, tramítalo como Normal (CAB) o Emergencia (ECAB).'
       );
       return;
     }
@@ -153,8 +163,8 @@ export const CreateRfcModal: React.FC<CreateRfcModalProps> = ({
               {tipo === 'Normal'
                 ? 'Un cambio Normal quedará pausado en estado "Pendiente Aprobación CAB" hasta que solicites revisión del comité.'
                 : tipo === 'Estándar'
-                  ? 'Un cambio Estándar de bajo riesgo está preautorizado por catálogo si cuenta con Rollback verificado.'
-                  : 'Un cambio de Emergencia se tramita por vía rápida ECAB manteniendo exigencia estricta de Rollback.'}
+                  ? 'Un cambio Estándar solo está preautorizado por catálogo si es de riesgo Bajo y cuenta con Rollback verificado.'
+                  : 'Un cambio de Emergencia no pasa por el CAB ordinario, pero necesita la aprobación del ECAB (comité de emergencia) antes de implementarse.'}
             </p>
           </div>
 
@@ -193,7 +203,7 @@ export const CreateRfcModal: React.FC<CreateRfcModalProps> = ({
                 onChange={(e) => setTipo(e.target.value as RfcTipo)}
                 className="w-full rounded-lg border border-slate-700 bg-[#0B0F17] px-3 py-2 text-xs text-slate-100 focus:border-blue-500 focus:outline-none"
               >
-                <option value="Estándar">Estándar (Preaprobado)</option>
+                <option value="Estándar">Estándar (preaprobado, solo riesgo Bajo)</option>
                 <option value="Normal">Normal (Requiere CAB)</option>
                 <option value="Emergencia">Emergencia (ECAB)</option>
               </select>

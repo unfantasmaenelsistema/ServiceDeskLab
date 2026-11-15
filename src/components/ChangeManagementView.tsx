@@ -266,7 +266,11 @@ export const ChangeManagementView: React.FC<ChangeManagementViewProps> = ({
                         className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-amber-500 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 whitespace-nowrap"
                       >
                         <i className="fa-solid fa-gavel text-[11px]" aria-hidden="true" />
-                        <span>Solicitar Aprobación CAB</span>
+                        <span>
+                          {rfc.tipo === 'Emergencia'
+                            ? 'Solicitar Aprobación ECAB'
+                            : 'Solicitar Aprobación CAB'}
+                        </span>
                       </button>
                     )}
 

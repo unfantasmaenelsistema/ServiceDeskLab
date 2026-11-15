@@ -1,8 +1,0 @@
-{
-  "name": "ServiceDeskLab",
-  "description": "Simulador educativo interactivo de gestión de servicios IT de Nivel 2 basado en ITIL v4.",
-  "requestFramePermissions": [],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
-}

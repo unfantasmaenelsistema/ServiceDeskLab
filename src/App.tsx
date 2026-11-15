@@ -35,7 +35,9 @@ import {
   extraerKeywordsDeProblema,
   guardarEstadoLocalStorage,
   recalcularMetricas,
+  estadoInicialRfc,
   registrarEventoEvaluacion,
+  registrarLogro,
   simularDecisionCab,
   validarEImportarEstadoJson,
 } from './data/serviceDeskStore';
@@ -225,7 +227,7 @@ export default function App() {
             ...t,
             slaTranscurridoSeg: transcurridoSeg,
             slaTranscurridoMin: Math.floor(transcurridoSeg / 60),
-            slaIncumplido: incumplido,
+            slaIncumplido: t.slaIncumplido || incumplido,
             historyLog,
           };
         });
@@ -330,7 +332,7 @@ export default function App() {
           ...t,
           slaTranscurridoSeg: transcurridoSeg,
           slaTranscurridoMin: Math.floor(transcurridoSeg / 60),
-          slaIncumplido: incumplido,
+          slaIncumplido: t.slaIncumplido || incumplido,
           historyLog,
         };
       });
@@ -457,7 +459,12 @@ export default function App() {
   const handleEscalarN2 = (ticketId: string) => {
     actualizarEstado((prev) => {
       const politica = prev.politicaEscaladoSla;
+      const objetivo = prev.tickets.find((t) => t.id === ticketId);
       return {
+        evaluacion:
+          objetivo && objetivo.nivel === 'N1'
+            ? registrarLogro(prev.evaluacion, 'escalado')
+            : prev.evaluacion,
         tickets: prev.tickets.map((t) => {
           if (t.id !== ticketId) return t;
           const equipoN2 = asignarEquipoN2PorCategoria(t.categoria);
@@ -469,7 +476,8 @@ export default function App() {
             asignadoA: equipoN2,
             slaTranscurridoSeg: reiniciar ? 0 : t.slaTranscurridoSeg,
             slaTranscurridoMin: reiniciar ? 0 : t.slaTranscurridoMin,
-            slaIncumplido: reiniciar ? false : t.slaIncumplido,
+            // El reloj OLA de N2 puede reiniciarse, pero un SLA ya vencido sigue vencido
+            slaIncumplido: t.slaIncumplido,
             slaPausado: !reiniciar,
             notasTecnicas: [
               ...t.notasTecnicas,
@@ -886,6 +894,9 @@ export default function App() {
             : t
         ),
         problemas: problemasActualizados,
+        evaluacion: cambios.problemaVinculadoId
+          ? registrarLogro(prev.evaluacion, 'problema')
+          : prev.evaluacion,
       };
     });
   };
@@ -1046,6 +1057,7 @@ export default function App() {
       return {
         tickets: ticketsActualizados,
         problemas: [problema, ...prev.problemas],
+        evaluacion: registrarLogro(prev.evaluacion, 'problema'),
       };
     });
 
@@ -1199,6 +1211,10 @@ export default function App() {
         tickets: ticketsActualizados,
         problemas: problemasActualizados,
         articulosKb: articulosKbActualizados,
+        evaluacion:
+          articulosKbActualizados !== prev.articulosKb
+            ? registrarLogro(prev.evaluacion, 'kb-pub')
+            : prev.evaluacion,
       };
     });
   };
@@ -1290,6 +1306,7 @@ export default function App() {
             }
           : p
       ),
+      evaluacion: registrarLogro(prev.evaluacion, 'problema'),
     }));
   };
 
@@ -1345,6 +1362,7 @@ export default function App() {
             referenciaId: problemaId,
             tipo: 'rca_completo',
           });
+          evalActual = registrarLogro(evalActual, 'rca');
         }
         const nuevoEstado =
           despues && p.estado === 'Investigación'
@@ -1464,7 +1482,8 @@ export default function App() {
         return Number.isNaN(parsed) ? max : Math.max(max, parsed);
       }, 500);
       const id = `RFC-${String(maxNum + 1).padStart(4, '0')}`;
-      const esNormal = payload.tipo === 'Normal';
+      const estadoRfc = estadoInicialRfc(payload.tipo, payload.riesgo);
+      const preautorizado = estadoRfc === 'Aprobado';
       const nuevoRfc: SolicitudCambioRfc = {
         id,
         problemaId: payload.problemaId,
@@ -1472,22 +1491,23 @@ export default function App() {
         titulo: payload.titulo,
         tipo: payload.tipo,
         riesgo: payload.riesgo,
-        estado: esNormal ? 'Pendiente Aprobación CAB' : 'Aprobado',
+        estado: estadoRfc,
         planImplementacion: payload.planImplementacion,
         planRollback: payload.planRollback,
         ventanaMantenimiento: payload.ventanaMantenimiento,
         solicitante: 'Especialista N2',
         creadoEn: new Date().toISOString(),
-        cabComentario: esNormal
-          ? undefined
-          : `Cambio ${payload.tipo} preautorizado con Plan de Implementación y Rollback verificados.`,
+        cabComentario: preautorizado
+          ? 'Cambio Estándar de riesgo Bajo: preautorizado por catálogo con Plan de Implementación y Rollback.'
+          : undefined,
       };
 
+      // Documentar el cambio puntúa una vez por problema (no por cada RFC creado)
       const evalActual = registrarEventoEvaluacion(prev.evaluacion, {
         delta: 10,
         concepto: `RFC (${payload.tipo}) documentado con Plan de Rollback`,
-        referenciaId: id,
-        tipo: 'rfc_aprobado',
+        referenciaId: payload.problemaId,
+        tipo: 'rfc_documentado',
       });
 
       return {
@@ -1536,7 +1556,7 @@ export default function App() {
             return { tickets: prev.tickets, problemas: prev.problemas };
           }
           const decision = simularDecisionCab(target);
-          const evalActual = registrarEventoEvaluacion(prev.evaluacion, {
+          const evalConDecision = registrarEventoEvaluacion(prev.evaluacion, {
             delta: decision.aprobado ? 20 : -10,
             concepto: decision.aprobado
               ? `RFC aprobado por el comité CAB (${target.riesgo})`
@@ -1544,6 +1564,9 @@ export default function App() {
             referenciaId: rfcId,
             tipo: decision.aprobado ? 'rfc_aprobado' : 'rfc_rechazado',
           });
+          const evalActual = decision.aprobado
+            ? registrarLogro(evalConDecision, 'cab')
+            : evalConDecision;
 
           return {
             tickets: prev.tickets,
@@ -1623,7 +1646,7 @@ export default function App() {
         delta: 10,
         concepto: `Cambio ejecutado en CMDB (${target.ciAfectado}) bajo RFC aprobado`,
         referenciaId: rfcId,
-        tipo: 'rfc_aprobado',
+        tipo: 'rfc_implementado',
       });
       return {
         tickets: prev.tickets,
@@ -1767,6 +1790,7 @@ export default function App() {
           : t
       ),
       problemas: prev.problemas,
+      evaluacion: registrarLogro(prev.evaluacion, 'csat'),
     }));
     lanzarToast(
       'success',

@@ -729,7 +729,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="xl:col-span-5 flex flex-col gap-6">
           {/* SLA Trend SVG Chart */}
           <section
-            aria-label="Tendencia de cumplimiento SLA por franja horaria"
+            aria-label="Tendencia de cumplimiento SLA durante la sesión"
             className="rounded-xl border border-slate-800/80 bg-[#111827] p-5"
           >
             <div className="flex items-center justify-between">
@@ -738,7 +738,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   Tendencia de Cumplimiento SLA
                 </h2>
                 <p className="mt-0.5 text-xs text-slate-400">
-                  Evolución porcentual durante la jornada operativa
+                  Evolución real en esta sesión (altas, vencimientos y cierres)
                 </p>
               </div>
               <span className="font-mono text-sm font-semibold tabular-nums text-blue-400">
