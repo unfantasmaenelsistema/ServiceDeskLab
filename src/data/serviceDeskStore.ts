@@ -408,7 +408,81 @@ const STOPWORDS_ES = new Set([
   'hay',
   'que',
   'error',
+  // Preposiciones que se confundían con raíces de palabras clave («contra» → «contraseña»)
+  'contra',
+  'hacia',
+  'hasta',
+  'durante',
+  'mediante',
+  'segun',
 ]);
+
+/** Separa un texto normalizado en palabras útiles para la búsqueda (sin stopwords). */
+function tokenizarBusqueda(textoNormalizado: string): string[] {
+  return textoNormalizado
+    .split(/[^a-z0-9._-]+/)
+    .map((t) => t.replace(/^[._-]+|[._-]+$/g, ''))
+    .filter((t) => t.length >= 2 && !STOPWORDS_ES.has(t));
+}
+
+/**
+ * ¿Son la misma palabra o variantes de ella (bloqueo/bloqueada, factura/facturación,
+ * tiworker/tiworker.exe)? Se compara la palabra completa o un prefijo común de 5+ letras
+ * que cubra al menos el 75 % de la más corta (así «contraseña» no es variante de «contratos»).
+ * Antes bastaba con que un trozo de 2 letras apareciera dentro de otra palabra
+ * («no» dentro de «notbefore», «ad» dentro de «nadie»), y casi todo coincidía con todo.
+ */
+function esMismaPalabra(a: string, b: string): boolean {
+  if (a === b) return true;
+  const min = Math.min(a.length, b.length);
+  if (min < 5) return false;
+  let comun = 0;
+  while (comun < min && a[comun] === b[comun]) comun++;
+  return comun >= 5 && comun >= min * 0.75;
+}
+
+/** Puntuación mínima en palabras clave para dar un artículo por válido (FCR). */
+const UMBRAL_ARTICULO_CORRECTO = 6;
+
+function puntuarArticuloKb(
+  normConsulta: string,
+  tokens: string[],
+  art: ArticuloKb
+): { scoreKeywords: number; scoreTitulo: number; coincidencias: string[] } {
+  const coincidencias = new Set<string>();
+  let scoreKeywords = 0;
+  for (const kw of art.keywords) {
+    const normKw = normalizarTextoBusqueda(kw).trim();
+    if (normKw.length < 2) continue;
+    const esFrase = /\s/.test(normKw);
+    if (esFrase) {
+      // Frases («active directory», «barra de tareas»): tienen que aparecer completas
+      const i = normConsulta.indexOf(normKw);
+      const antes = i > 0 ? normConsulta[i - 1] : ' ';
+      const despues = normConsulta[i + normKw.length] ?? ' ';
+      if (i >= 0 && !/[a-z0-9]/.test(antes) && !/[a-z0-9]/.test(despues)) {
+        coincidencias.add(kw);
+        scoreKeywords += 4;
+      }
+    } else if (tokens.includes(normKw)) {
+      coincidencias.add(kw);
+      scoreKeywords += 4;
+    } else if (tokens.some((tok) => esMismaPalabra(tok, normKw))) {
+      coincidencias.add(kw);
+      scoreKeywords += 2;
+    }
+  }
+
+  const tokensTitulo = tokenizarBusqueda(normalizarTextoBusqueda(art.titulo));
+  let scoreTitulo = 0;
+  for (const tok of new Set(tokens)) {
+    if (tok.length >= 4 && tokensTitulo.some((t) => esMismaPalabra(t, tok))) {
+      coincidencias.add(tok);
+      scoreTitulo += 1;
+    }
+  }
+  return { scoreKeywords, scoreTitulo, coincidencias: Array.from(coincidencias) };
+}
 
 export function buscarArticulosKbRelevantes(
   consulta: string,
@@ -424,10 +498,7 @@ export function buscarArticulosKbRelevantes(
     }));
   }
 
-  const tokens = normConsulta
-    .split(/[^a-z0-9._-]+/)
-    .filter((t) => t.length >= 2 && !STOPWORDS_ES.has(t));
-
+  const tokens = tokenizarBusqueda(normConsulta);
   const resultados: {
     articulo: ArticuloKb;
     coincidencias: string[];
@@ -435,62 +506,33 @@ export function buscarArticulosKbRelevantes(
   }[] = [];
 
   for (const art of articulos) {
-    const coincidenciasSet = new Set<string>();
-    let score = 0;
-
-    const normTitulo = normalizarTextoBusqueda(art.titulo);
-    const normSintoma = normalizarTextoBusqueda(art.sintoma);
-
-    for (const kw of art.keywords) {
-      const normKw = normalizarTextoBusqueda(kw);
-      if (normKw.length >= 2 && normConsulta.includes(normKw)) {
-        coincidenciasSet.add(kw);
-        score += 4;
-      } else {
-        for (const tok of tokens) {
-          if (normKw.includes(tok) || tok.includes(normKw)) {
-            coincidenciasSet.add(kw);
-            score += 2;
-          }
-        }
-      }
-    }
-
-    for (const tok of tokens) {
-      if (tok.length >= 3 && normTitulo.includes(tok)) {
-        coincidenciasSet.add(tok);
-        score += 2;
-      } else if (tok.length >= 4 && normSintoma.includes(tok)) {
-        score += 1;
-      }
-    }
-
+    const { scoreKeywords, scoreTitulo, coincidencias } = puntuarArticuloKb(normConsulta, tokens, art);
+    let score = scoreKeywords + scoreTitulo;
     if (categoriaPreferida && art.categoria === categoriaPreferida && score > 0) {
       score += 2;
     }
-
     if (score > 0) {
-      resultados.push({
-        articulo: art,
-        coincidencias: Array.from(coincidenciasSet).slice(0, 5),
-        score,
-      });
+      resultados.push({ articulo: art, coincidencias: coincidencias.slice(0, 5), score });
     }
   }
 
   return resultados.sort((a, b) => b.score - a.score);
 }
 
+/**
+ * Un artículo vale para resolver un ticket (y contar FCR) si sus palabras clave coinciden
+ * de verdad con el ticket: al menos una exacta y otra parcial, o dos variantes
+ * (umbral 6). El título y la categoría ayudan a ordenar las sugerencias, pero no bastan.
+ */
 export function esArticuloKbCorrectoParaTicket(
   ticket: Ticket,
   articulo: ArticuloKb
 ): boolean {
-  const matches = buscarArticulosKbRelevantes(
-    `${ticket.titulo} ${ticket.descripcion} ${ticket.ciAfectado}`,
-    [articulo],
-    ticket.categoria
-  );
-  return matches.length > 0 && matches[0].score >= 2;
+  const normConsulta = normalizarTextoBusqueda(
+    `${ticket.titulo} ${ticket.descripcion} ${ticket.ciAfectado}`
+  ).trim();
+  const { scoreKeywords } = puntuarArticuloKb(normConsulta, tokenizarBusqueda(normConsulta), articulo);
+  return scoreKeywords >= UMBRAL_ARTICULO_CORRECTO;
 }
 
 export function extraerKeywordsDeProblema(problema: Problema): string[] {
