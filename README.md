@@ -142,6 +142,7 @@ El simulador puntúa automáticamente la toma de decisiones del alumno (base ini
   - Intento de cierre de Problemas críticos/altos sin **RCA** documentado.
   - Intento de cierre de un Problema P1 sin contar con un **RFC** aprobado o implementado.
 - **Cada acción puntúa una sola vez** por ticket, problema o cambio: rehacer un RCA, repetir un intento de cierre o crear varios RFC para el mismo problema no multiplica los puntos ni las penalizaciones. Un ticket cuyo texto no permite valorar la clasificación no suma ni resta.
+- **El FCR exige el artículo adecuado**: un artículo de la KEDB solo cuenta como válido si sus palabras clave coinciden de verdad con el ticket (palabras completas o variantes, como *bloqueo*/*bloqueada*). Resolver con un artículo que no corresponde cierra el ticket, pero no suma FCR.
 - **Un SLA vencido queda vencido**: aunque la política de escalado reinicie el reloj OLA en N2, el incumplimiento sigue contando en las métricas.
 
 ---
@@ -251,6 +252,7 @@ ServiceDeskLab/
 - **Móvil** sin desbordes en la barra superior; React va en su propio fichero (el bundle principal baja de 500 kB).
 - **Limpieza**: fuera las dependencias y ficheros de AI Studio que no se usaban y la copia estática duplicada de `github-pages/`, que no tenía estas correcciones.
 
+- **KEDB sin falsos positivos**: el buscador comparaba trozos de 2 letras dentro de otras palabras («no» dentro de *notbefore*), así que casi todos los artículos «coincidían» con cualquier ticket y daban el FCR. Ahora compara palabras completas o variantes, y el FCR exige coincidencias en las palabras clave.
 ---
 
 ## Créditos y Licencia
